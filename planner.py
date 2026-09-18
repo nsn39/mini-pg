@@ -1,349 +1,202 @@
-# minipg/parser.py
+# minipg/planner.py
 
 from dataclasses import dataclass
-import re
-from typing import Any, List, Optional
+from typing import Any, List
+
+from .parser import (
+    CreateTable,
+    Delete,
+    DropTable,
+    Insert,
+    Select,
+    Statement,
+)
 
 
 # ----------------------------------------------------------------------
-# AST nodes
+# Plan nodes
 # ----------------------------------------------------------------------
 
 @dataclass
-class ColumnDef:
-    name: str
-    data_type: str
-    nullable: bool = True
-
-
-@dataclass
-class CreateTable:
+class CreateTablePlan:
     table_name: str
-    columns: List[ColumnDef]
+    columns: list
 
 
 @dataclass
-class DropTable:
+class DropTablePlan:
     table_name: str
 
 
 @dataclass
-class Insert:
+class InsertPlan:
     table_name: str
-    columns: List[str]
-    values: List[Any]
+    row: dict[str, Any]
 
 
 @dataclass
-class Select:
-    columns: List[str]
-    table_name: str
-
-
-@dataclass
-class Delete:
-    table_name: str
-
-
-Statement = CreateTable | DropTable | Insert | Select | Delete
-
-
-# ----------------------------------------------------------------------
-# Tokenization helpers
-# ----------------------------------------------------------------------
-
-def _split_csv(value: str) -> List[str]:
+class SeqScanPlan:
     """
-    Split comma-separated values while ignoring commas inside strings.
+    Sequential scan of every row in a table.
 
-    Example:
-        "1, 'Alice', 'New York'"
-        ->
-        ["1", "'Alice'", "'New York'"]
+    This is the simplest possible SELECT access method.
+    Later MiniPG can add IndexScanPlan.
     """
 
-    parts = []
-    current = []
-    in_string = False
-    quote = None
-
-    for char in value:
-        if char in ("'", '"'):
-            if in_string and char == quote:
-                in_string = False
-            elif not in_string:
-                in_string = True
-                quote = char
-
-        if char == "," and not in_string:
-            parts.append("".join(current).strip())
-            current = []
-        else:
-            current.append(char)
-
-    if current:
-        parts.append("".join(current).strip())
-
-    return parts
+    table_name: str
 
 
-def _parse_value(value: str) -> Any:
-    """Convert a SQL literal into a Python value."""
+@dataclass
+class ProjectionPlan:
+    """
+    Select specific columns from the rows produced by another plan.
+    """
 
-    value = value.strip()
+    columns: List[str]
+    child: Any
 
-    # Strings
-    if (
-        len(value) >= 2
-        and value[0] == "'"
-        and value[-1] == "'"
-    ):
-        return value[1:-1]
 
-    # NULL
-    if value.upper() == "NULL":
-        return None
+@dataclass
+class DeletePlan:
+    table_name: str
 
-    # Integer
-    if re.fullmatch(r"-?\d+", value):
-        return int(value)
 
-    # Floating-point number
-    if re.fullmatch(r"-?\d+\.\d+", value):
-        return float(value)
-
-    # Boolean
-    if value.upper() == "TRUE":
-        return True
-
-    if value.upper() == "FALSE":
-        return False
-
-    raise ValueError(f"unsupported value: {value}")
+Plan = (
+    CreateTablePlan
+    | DropTablePlan
+    | InsertPlan
+    | SeqScanPlan
+    | ProjectionPlan
+    | DeletePlan
+)
 
 
 # ----------------------------------------------------------------------
-# Statement parsers
+# Planner
 # ----------------------------------------------------------------------
 
-def _parse_create_table(sql: str) -> CreateTable:
-    pattern = re.compile(
-        r"""
-        ^CREATE\s+TABLE\s+
-        ([a-zA-Z_][a-zA-Z0-9_]*)
-        \s*\(
-        (.*)
-        \)
-        $
-        """,
-        re.IGNORECASE | re.VERBOSE,
-    )
+class Planner:
+    """
+    Converts parser AST nodes into execution plans.
 
-    match = pattern.match(sql)
+    Parser:
+        SQL -> AST
 
-    if not match:
-        raise ValueError("invalid CREATE TABLE statement")
+    Planner:
+        AST -> Plan
 
-    table_name = match.group(1)
-    column_text = match.group(2)
+    Executor:
+        Plan -> actual database operation
+    """
 
-    columns = []
+    def plan(self, statement: Statement) -> Plan:
 
-    for definition in _split_csv(column_text):
-        parts = definition.split()
+        if isinstance(statement, CreateTable):
+            return self._plan_create_table(statement)
 
-        if len(parts) < 2:
-            raise ValueError(
-                f"invalid column definition: {definition}"
-            )
+        if isinstance(statement, DropTable):
+            return self._plan_drop_table(statement)
 
-        column_name = parts[0]
-        data_type = parts[1].upper()
+        if isinstance(statement, Insert):
+            return self._plan_insert(statement)
 
-        nullable = True
+        if isinstance(statement, Select):
+            return self._plan_select(statement)
 
-        if len(parts) > 2:
-            constraints = [part.upper() for part in parts[2:]]
+        if isinstance(statement, Delete):
+            return self._plan_delete(statement)
 
-            if "NOT" in constraints and "NULL" in constraints:
-                nullable = False
-
-        columns.append(
-            ColumnDef(
-                name=column_name,
-                data_type=data_type,
-                nullable=nullable,
-            )
-        )
-
-    return CreateTable(
-        table_name=table_name,
-        columns=columns,
-    )
-
-
-def _parse_drop_table(sql: str) -> DropTable:
-    pattern = re.compile(
-        r"^DROP\s+TABLE\s+([a-zA-Z_][a-zA-Z0-9_]*)$",
-        re.IGNORECASE,
-    )
-
-    match = pattern.match(sql)
-
-    if not match:
-        raise ValueError("invalid DROP TABLE statement")
-
-    return DropTable(
-        table_name=match.group(1),
-    )
-
-
-def _parse_insert(sql: str) -> Insert:
-    pattern = re.compile(
-        r"""
-        ^INSERT\s+INTO\s+
-        ([a-zA-Z_][a-zA-Z0-9_]*)
-        \s*
-        \(
-            (.*?)
-        \)
-        \s*
-        VALUES
-        \s*
-        \(
-            (.*?)
-        \)
-        $
-        """,
-        re.IGNORECASE | re.VERBOSE,
-    )
-
-    match = pattern.match(sql)
-
-    if not match:
-        raise ValueError("invalid INSERT statement")
-
-    table_name = match.group(1)
-
-    columns = [
-        column.strip()
-        for column in _split_csv(match.group(2))
-    ]
-
-    values = [
-        _parse_value(value)
-        for value in _split_csv(match.group(3))
-    ]
-
-    if len(columns) != len(values):
         raise ValueError(
-            "number of columns does not match number of values"
+            f"unsupported statement type: {type(statement).__name__}"
         )
 
-    return Insert(
-        table_name=table_name,
-        columns=columns,
-        values=values,
-    )
+    # ------------------------------------------------------------------
+    # CREATE TABLE
+    # ------------------------------------------------------------------
 
+    def _plan_create_table(
+        self,
+        statement: CreateTable,
+    ) -> CreateTablePlan:
 
-def _parse_select(sql: str) -> Select:
-    pattern = re.compile(
-        r"""
-        ^SELECT\s+
-        (.+?)
-        \s+FROM\s+
-        ([a-zA-Z_][a-zA-Z0-9_]*)
-        $
-        """,
-        re.IGNORECASE | re.VERBOSE,
-    )
+        return CreateTablePlan(
+            table_name=statement.table_name,
+            columns=statement.columns,
+        )
 
-    match = pattern.match(sql)
+    # ------------------------------------------------------------------
+    # DROP TABLE
+    # ------------------------------------------------------------------
 
-    if not match:
-        raise ValueError("invalid SELECT statement")
+    def _plan_drop_table(
+        self,
+        statement: DropTable,
+    ) -> DropTablePlan:
 
-    column_text = match.group(1).strip()
-    table_name = match.group(2)
+        return DropTablePlan(
+            table_name=statement.table_name,
+        )
 
-    if column_text == "*":
-        columns = ["*"]
-    else:
-        columns = [
-            column.strip()
-            for column in _split_csv(column_text)
-        ]
+    # ------------------------------------------------------------------
+    # INSERT
+    # ------------------------------------------------------------------
 
-    return Select(
-        columns=columns,
-        table_name=table_name,
-    )
+    def _plan_insert(
+        self,
+        statement: Insert,
+    ) -> InsertPlan:
 
+        if len(statement.columns) != len(statement.values):
+            raise ValueError(
+                "number of columns does not match "
+                "number of values"
+            )
 
-def _parse_delete(sql: str) -> Delete:
-    pattern = re.compile(
-        r"""
-        ^DELETE\s+FROM\s+
-        ([a-zA-Z_][a-zA-Z0-9_]*)
-        $
-        """,
-        re.IGNORECASE | re.VERBOSE,
-    )
+        row = dict(
+            zip(
+                statement.columns,
+                statement.values,
+            )
+        )
 
-    match = pattern.match(sql)
+        return InsertPlan(
+            table_name=statement.table_name,
+            row=row,
+        )
 
-    if not match:
-        raise ValueError("invalid DELETE statement")
+    # ------------------------------------------------------------------
+    # SELECT
+    # ------------------------------------------------------------------
 
-    return Delete(
-        table_name=match.group(1),
-    )
+    def _plan_select(
+        self,
+        statement: Select,
+    ) -> Plan:
 
+        # Every SELECT currently starts with a sequential scan.
+        scan = SeqScanPlan(
+            table_name=statement.table_name,
+        )
 
-# ----------------------------------------------------------------------
-# Public parser
-# ----------------------------------------------------------------------
+        # SELECT *
+        if statement.columns == ["*"]:
+            return scan
 
-def parse(sql: str) -> Statement:
-    """
-    Parse a SQL statement and return an AST node.
+        # SELECT id, name, age
+        return ProjectionPlan(
+            columns=statement.columns,
+            child=scan,
+        )
 
-    Supported statements:
+    # ------------------------------------------------------------------
+    # DELETE
+    # ------------------------------------------------------------------
 
-        CREATE TABLE
-        DROP TABLE
-        INSERT INTO ... VALUES
-        SELECT ... FROM
-        DELETE FROM
-    """
+    def _plan_delete(
+        self,
+        statement: Delete,
+    ) -> DeletePlan:
 
-    sql = sql.strip()
-
-    # Remove optional semicolon.
-    if sql.endswith(";"):
-        sql = sql[:-1].strip()
-
-    if not sql:
-        raise ValueError("empty SQL statement")
-
-    keyword = sql.split(None, 1)[0].upper()
-
-    if keyword == "CREATE":
-        return _parse_create_table(sql)
-
-    if keyword == "DROP":
-        return _parse_drop_table(sql)
-
-    if keyword == "INSERT":
-        return _parse_insert(sql)
-
-    if keyword == "SELECT":
-        return _parse_select(sql)
-
-    if keyword == "DELETE":
-        return _parse_delete(sql)
-
-    raise ValueError(
-        f"unsupported SQL statement: {keyword}"
-    )
+        return DeletePlan(
+            table_name=statement.table_name,
+        )

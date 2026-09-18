@@ -24,3 +24,18 @@ Index Scan   Sequential Scan
         ▼
       Results
 ```
+
+```
+main.py
+   ↓
+SQL input
+   ↓
+parser.py
+   ↓
+planner.py
+   ↓
+executor.py
+   ↓
+storage.py / catalog.py
+
+```
