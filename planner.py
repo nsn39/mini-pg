@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any, List
 
-from .parser import (
+from parser import (
     CreateTable,
     Delete,
     DropTable,

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .catalog import Catalog
+from catalog import Catalog
 
 
 Row = Dict[str, Any]

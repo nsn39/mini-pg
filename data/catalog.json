@@ -1,0 +1,24 @@
+{
+  "tables": {
+    "customer": {
+      "name": "customer",
+      "columns": [
+        {
+          "name": "id",
+          "data_type": "INT",
+          "nullable": true
+        },
+        {
+          "name": "name",
+          "data_type": "VARCHAR",
+          "nullable": true
+        },
+        {
+          "name": "date_of_birth",
+          "data_type": "DATETIME",
+          "nullable": true
+        }
+      ]
+    }
+  }
+}

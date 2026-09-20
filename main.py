@@ -1,8 +1,8 @@
 # minipg/main.py
 
-from .executor import Executor
-from .parser import parse
-from .planner import Planner
+from executor import Executor
+from parser import parse
+from planner import Planner
 
 
 def print_rows(rows: list[dict]) -> None:

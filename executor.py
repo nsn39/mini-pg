@@ -2,8 +2,8 @@
 
 from typing import Any, Dict, List
 
-from .catalog import Catalog, Column, Table
-from .planner import (
+from catalog import Catalog, Column, Table
+from planner import (
     CreateTablePlan,
     DeletePlan,
     DropTablePlan,
@@ -12,7 +12,7 @@ from .planner import (
     ProjectionPlan,
     SeqScanPlan,
 )
-from .storage import Row, Storage
+from storage import Row, Storage
 
 
 class Executor:
