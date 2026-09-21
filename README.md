@@ -6,6 +6,8 @@ A toy implementation of a PostgreSQL-like database built using AI coding tools a
 
 **Original Reference URL:** https://github.com/postgres/postgres
 
+**Github Project Board URL:** https://github.com/users/nsn39/projects/1
+
 **AI Tools Used:**
 
 * ChatGPT GPT-5
