@@ -71,7 +71,7 @@ class ProjectionPlan:
 @dataclass
 class DeletePlan:
     table_name: str
-
+    where: Any = None
 
 Plan = (
     CreateTablePlan
@@ -221,4 +221,5 @@ class Planner:
 
         return DeletePlan(
             table_name=statement.table_name,
+            where=statement.where,
         )

@@ -272,8 +272,61 @@ class Executor:
     ) -> str:
         """Execute DELETE."""
 
-        count = self.storage.delete_all(
+        if plan.where is None:
+            count = self.storage.delete_all(
+                plan.table_name
+            )
+
+            return f"DELETE {count}"
+
+        rows = self.storage.select_all(
             plan.table_name
+        )
+
+        table = self.catalog.get_table(
+            plan.table_name
+        )
+
+        valid_columns = {
+            column.name
+            for column in table.columns
+        }
+
+        if plan.where["column"] not in valid_columns:
+            raise ValueError(
+                f"column '{plan.where['column']}' does not exist "
+                f"in table '{table.name}'"
+            )
+
+        column = plan.where["column"]
+        operator = plan.where["operator"]
+        condition_value = plan.where["value"]
+
+        matching_rows = []
+
+        for row in rows:
+            row_value = row[column]
+
+            if operator == "=":
+                matches = str(row_value) == condition_value
+
+            elif operator == "<":
+                matches = row_value < type(row_value)(condition_value)
+
+            elif operator == ">":
+                matches = row_value > type(row_value)(condition_value)
+
+            else:
+                raise ValueError(
+                    f"unsupported operator: {operator}"
+                )
+
+            if matches:
+                matching_rows.append(row)
+
+        count = self.storage.delete_rows(
+            plan.table_name,
+            matching_rows,
         )
 
         return f"DELETE {count}"

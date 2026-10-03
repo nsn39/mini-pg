@@ -44,6 +44,7 @@ class Select:
 @dataclass
 class Delete:
     table_name: str
+    where: Optional[Dict[str, str]] = None
 
 
 Statement = CreateTable | DropTable | Insert | Select | Delete
@@ -304,6 +305,11 @@ def _parse_delete(sql: str) -> Delete:
         r"""
         ^DELETE\s+FROM\s+
         ([a-zA-Z_][a-zA-Z0-9_]*)
+        (?:\s+WHERE\s+
+            ([a-zA-Z_][a-zA-Z0-9_]*)
+            \s*(=|<|>)
+            \s*(.+?)
+        )?
         $
         """,
         re.IGNORECASE | re.VERBOSE,
@@ -314,8 +320,24 @@ def _parse_delete(sql: str) -> Delete:
     if not match:
         raise ValueError("invalid DELETE statement")
 
+    table_name = match.group(1)
+
+    where_column = match.group(2)
+    where_operator = match.group(3)
+    where_value = match.group(4)
+
+    where = None
+
+    if where_column is not None:
+        where = {
+            "column": where_column,
+            "operator": where_operator,
+            "value": where_value.strip(),
+        }
+
     return Delete(
-        table_name=match.group(1),
+        table_name=table_name,
+        where=where,
     )
 
 

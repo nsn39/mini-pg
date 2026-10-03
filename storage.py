@@ -264,3 +264,48 @@ class Storage:
                     count += 1
 
         return count
+
+    def delete_rows(
+        self,
+        table_name: str,
+        rows_to_delete: List[Row],
+    ) -> int:
+        """
+        Delete specific rows from a table.
+
+        The matching rows are removed and the remaining rows
+        are written back to the table file.
+
+        Returns the number of deleted rows.
+        """
+
+        self.catalog.get_table(table_name)
+
+        self._ensure_storage_exists(table_name)
+
+        path = self._table_path(table_name)
+
+        rows = self.select_all(table_name)
+
+        # Remove rows that match the rows_to_delete list.
+        remaining_rows = [
+            row
+            for row in rows
+            if row not in rows_to_delete
+        ]
+
+        count = len(rows) - len(remaining_rows)
+
+        # Rewrite the table file with only the remaining rows.
+        with path.open(
+            "w",
+            encoding="utf-8",
+        ) as file:
+
+            for row in remaining_rows:
+                file.write(
+                    json.dumps(row)
+                    + "\n"
+                )
+
+        return count
