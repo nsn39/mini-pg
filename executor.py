@@ -8,6 +8,7 @@ from planner import (
     DeletePlan,
     DropTablePlan,
     InsertPlan,
+    FilterPlan,
     Plan,
     ProjectionPlan,
     SeqScanPlan,
@@ -65,6 +66,9 @@ class Executor:
 
         if isinstance(plan, SeqScanPlan):
             return self._execute_seq_scan(plan)
+
+        if isinstance(plan, FilterPlan):
+            return self._execute_filter(plan)
 
         if isinstance(plan, ProjectionPlan):
             return self._execute_projection(plan)
@@ -144,6 +148,67 @@ class Executor:
         return self.storage.select_all(
             plan.table_name
         )
+
+    def _execute_filter(
+        self,
+        plan: FilterPlan,
+    ) -> List[Row]:
+        """
+        Execute a WHERE filter.
+
+        Example:
+
+            SELECT * FROM users WHERE age > 20
+
+        The child plan produces all rows, and this method
+        keeps only the rows satisfying the condition.
+        """
+
+        rows = self.execute(plan.child)
+
+        if not rows:
+            return []
+
+        # Validate that the WHERE column exists.
+        table = self.catalog.get_table(
+            plan.child.table_name
+        )
+
+        valid_columns = {
+            column.name
+            for column in table.columns
+        }
+
+        if plan.column not in valid_columns:
+            raise ValueError(
+                f"column '{plan.column}' does not exist "
+                f"in table '{table.name}'"
+            )
+
+        filtered_rows = []
+
+        for row in rows:
+            row_value = row[plan.column]
+            condition_value = plan.value
+
+            if plan.operator == "=":
+                matches = str(row_value) == condition_value
+
+            elif plan.operator == "<":
+                matches = row_value < type(row_value)(condition_value)
+
+            elif plan.operator == ">":
+                matches = row_value > type(row_value)(condition_value)
+
+            else:
+                raise ValueError(
+                    f"unsupported operator: {plan.operator}"
+                )
+
+            if matches:
+                filtered_rows.append(row)
+
+        return filtered_rows
 
     def _execute_projection(
         self,

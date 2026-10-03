@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 import re
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict
 
 
 # ----------------------------------------------------------------------
@@ -38,6 +38,7 @@ class Insert:
 class Select:
     columns: List[str]
     table_name: str
+    where: Optional[Dict[str, str]] = None
 
 
 @dataclass
@@ -246,7 +247,6 @@ def _parse_insert(sql: str) -> Insert:
         values=values,
     )
 
-
 def _parse_select(sql: str) -> Select:
     pattern = re.compile(
         r"""
@@ -254,6 +254,11 @@ def _parse_select(sql: str) -> Select:
         (.+?)
         \s+FROM\s+
         ([a-zA-Z_][a-zA-Z0-9_]*)
+        (?:\s+WHERE\s+
+            ([a-zA-Z_][a-zA-Z0-9_]*)
+            \s*(=|<|>)
+            \s*(.+?)
+        )?
         $
         """,
         re.IGNORECASE | re.VERBOSE,
@@ -267,6 +272,10 @@ def _parse_select(sql: str) -> Select:
     column_text = match.group(1).strip()
     table_name = match.group(2)
 
+    where_column = match.group(3)
+    where_operator = match.group(4)
+    where_value = match.group(5)
+
     if column_text == "*":
         columns = ["*"]
     else:
@@ -275,11 +284,20 @@ def _parse_select(sql: str) -> Select:
             for column in _split_csv(column_text)
         ]
 
+    where = None
+
+    if where_column is not None:
+        where = {
+            "column": where_column,
+            "operator": where_operator,
+            "value": where_value.strip(),
+        }
+
     return Select(
         columns=columns,
         table_name=table_name,
+        where=where,
     )
-
 
 def _parse_delete(sql: str) -> Delete:
     pattern = re.compile(
