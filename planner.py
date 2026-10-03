@@ -47,6 +47,18 @@ class SeqScanPlan:
 
 
 @dataclass
+class FilterPlan:
+    """
+    Filter rows produced by another plan using a WHERE condition.
+    """
+
+    column: str
+    operator: str
+    value: str
+    child: Any
+
+
+@dataclass
 class ProjectionPlan:
     """
     Select specific columns from the rows produced by another plan.
@@ -59,13 +71,14 @@ class ProjectionPlan:
 @dataclass
 class DeletePlan:
     table_name: str
-
+    where: Any = None
 
 Plan = (
     CreateTablePlan
     | DropTablePlan
     | InsertPlan
     | SeqScanPlan
+    | FilterPlan
     | ProjectionPlan
     | DeletePlan
 )
@@ -178,6 +191,15 @@ class Planner:
             table_name=statement.table_name,
         )
 
+        # Add a filter if the SELECT contains a WHERE clause.
+        if statement.where is not None:
+            scan = FilterPlan(
+                column=statement.where["column"],
+                operator=statement.where["operator"],
+                value=statement.where["value"],
+                child=scan,
+            )
+
         # SELECT *
         if statement.columns == ["*"]:
             return scan
@@ -199,4 +221,5 @@ class Planner:
 
         return DeletePlan(
             table_name=statement.table_name,
+            where=statement.where,
         )
