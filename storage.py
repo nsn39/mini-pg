@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from catalog import Catalog
+from index import BTreeIndex
 
 
 Row = Dict[str, Any]
@@ -23,10 +24,8 @@ class Storage:
 
     Each line in a table file represents one JSON-encoded row.
 
-    Example data/users:
-
-        {"id": 1, "name": "Nishan", "age": 25}
-        {"id": 2, "name": "Alice", "age": 30}
+    Indexes are currently kept in memory and are maintained
+    automatically when rows are inserted or deleted.
     """
 
     def __init__(
@@ -43,21 +42,39 @@ class Storage:
             exist_ok=True,
         )
 
+        # Actual index structures currently loaded in memory.
+        #
+        # Key:
+        #     index name
+        #
+        # Value:
+        #     BTreeIndex object
+        self.indexes: Dict[str, BTreeIndex] = {}
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _table_path(self, table_name: str) -> Path:
+    def _table_path(
+        self,
+        table_name: str,
+    ) -> Path:
         """Return the filesystem path for a table."""
 
         return self.data_dir / table_name
 
-    def _ensure_table_exists(self, table_name: str) -> None:
+    def _ensure_table_exists(
+        self,
+        table_name: str,
+    ) -> None:
         """Make sure the table exists in the catalog."""
 
         self.catalog.get_table(table_name)
 
-    def _ensure_storage_exists(self, table_name: str) -> None:
+    def _ensure_storage_exists(
+        self,
+        table_name: str,
+    ) -> None:
         """Make sure the table's storage file exists."""
 
         path = self._table_path(table_name)
@@ -71,7 +88,10 @@ class Storage:
     # Table management
     # ------------------------------------------------------------------
 
-    def create_table(self, table_name: str) -> None:
+    def create_table(
+        self,
+        table_name: str,
+    ) -> None:
         """
         Create an empty storage file for a table.
 
@@ -90,7 +110,10 @@ class Storage:
         # Create an empty file.
         path.touch()
 
-    def drop_table(self, table_name: str) -> None:
+    def drop_table(
+        self,
+        table_name: str,
+    ) -> None:
         """Delete the storage file for a table."""
 
         path = self._table_path(table_name)
@@ -100,7 +123,78 @@ class Storage:
                 f"storage for table '{table_name}' does not exist"
             )
 
+        # Remove indexes belonging to this table.
+        indexes_to_remove = [
+            index_name
+            for index_name, index in self.indexes.items()
+            if index.table_name == table_name
+        ]
+
+        for index_name in indexes_to_remove:
+            del self.indexes[index_name]
+
         path.unlink()
+
+    # ------------------------------------------------------------------
+    # Index management
+    # ------------------------------------------------------------------
+
+    def create_index(
+        self,
+        index_name: str,
+        table_name: str,
+        column_name: str,
+    ) -> None:
+        """
+        Create an in-memory index for an existing table column.
+
+        The catalog stores the index metadata.
+        Storage creates and builds the actual BTreeIndex.
+        """
+
+        table = self.catalog.get_table(table_name)
+
+        valid_columns = {
+            column.name
+            for column in table.columns
+        }
+
+        if column_name not in valid_columns:
+            raise ValueError(
+                f"column '{column_name}' does not exist "
+                f"in table '{table_name}'"
+            )
+
+        if index_name in self.indexes:
+            raise ValueError(
+                f"index '{index_name}' already exists"
+            )
+
+        index = BTreeIndex(
+            table_name=table_name,
+            column_name=column_name,
+        )
+
+        # Build the index using all existing rows.
+        rows = self.select_all(table_name)
+
+        index.build(rows)
+
+        # Store the actual index in memory.
+        self.indexes[index_name] = index
+
+    def get_index(
+        self,
+        index_name: str,
+    ) -> BTreeIndex:
+        """Return an in-memory index."""
+
+        try:
+            return self.indexes[index_name]
+        except KeyError:
+            raise ValueError(
+                f"index '{index_name}' does not exist"
+            )
 
     # ------------------------------------------------------------------
     # Insert
@@ -165,6 +259,14 @@ class Storage:
                 json.dumps(row)
                 + "\n"
             )
+
+        # --------------------------------------------------------------
+        # Update indexes
+        # --------------------------------------------------------------
+
+        for index in self.indexes.values():
+            if index.table_name == table_name:
+                index.insert(row)
 
     # ------------------------------------------------------------------
     # Select
@@ -234,34 +336,14 @@ class Storage:
             encoding="utf-8",
         )
 
-        return count
+        # --------------------------------------------------------------
+        # Update indexes
+        # --------------------------------------------------------------
 
-    # ------------------------------------------------------------------
-    # Metadata
-    # ------------------------------------------------------------------
-
-    def row_count(
-        self,
-        table_name: str,
-    ) -> int:
-        """Return the number of rows in a table."""
-
-        self.catalog.get_table(table_name)
-
-        self._ensure_storage_exists(table_name)
-
-        count = 0
-
-        path = self._table_path(table_name)
-
-        with path.open(
-            "r",
-            encoding="utf-8",
-        ) as file:
-
-            for line in file:
-                if line.strip():
-                    count += 1
+        for index in self.indexes.values():
+            if index.table_name == table_name:
+                for row in rows:
+                    index.delete(row)
 
         return count
 
@@ -307,5 +389,43 @@ class Storage:
                     json.dumps(row)
                     + "\n"
                 )
+
+        # --------------------------------------------------------------
+        # Update indexes
+        # --------------------------------------------------------------
+
+        for index in self.indexes.values():
+            if index.table_name == table_name:
+                for row in rows_to_delete:
+                    index.delete(row)
+
+        return count
+
+    # ------------------------------------------------------------------
+    # Metadata
+    # ------------------------------------------------------------------
+
+    def row_count(
+        self,
+        table_name: str,
+    ) -> int:
+        """Return the number of rows in a table."""
+
+        self.catalog.get_table(table_name)
+
+        self._ensure_storage_exists(table_name)
+
+        count = 0
+
+        path = self._table_path(table_name)
+
+        with path.open(
+            "r",
+            encoding="utf-8",
+        ) as file:
+
+            for line in file:
+                if line.strip():
+                    count += 1
 
         return count

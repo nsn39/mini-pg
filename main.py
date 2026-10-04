@@ -53,7 +53,7 @@ def run_shell() -> None:
     """Start the MiniPG interactive SQL shell."""
 
     executor = Executor()
-    planner = Planner()
+    planner = Planner(executor.catalog)
 
     print("MiniPG")
     print("Toy PostgreSQL-like database")

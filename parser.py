@@ -26,6 +26,12 @@ class CreateTable:
 class DropTable:
     table_name: str
 
+@dataclass
+class CreateIndex:
+    index_name: str
+    table_name: str
+    column_name: str
+
 
 @dataclass
 class Insert:
@@ -47,7 +53,14 @@ class Delete:
     where: Optional[Dict[str, str]] = None
 
 
-Statement = CreateTable | DropTable | Insert | Select | Delete
+Statement = (
+    CreateTable
+    | DropTable
+    | CreateIndex
+    | Insert
+    | Select
+    | Delete
+)
 
 
 # ----------------------------------------------------------------------
@@ -197,6 +210,34 @@ def _parse_drop_table(sql: str) -> DropTable:
 
     return DropTable(
         table_name=match.group(1),
+    )
+
+def _parse_create_index(sql: str) -> CreateIndex:
+    pattern = re.compile(
+        r"""
+        ^CREATE\s+INDEX\s+
+        ([a-zA-Z_][a-zA-Z0-9_]*)
+        \s+ON\s+
+        ([a-zA-Z_][a-zA-Z0-9_]*)
+        \s*\(\s*
+        ([a-zA-Z_][a-zA-Z0-9_]*)
+        \s*\)
+        $
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+
+    match = pattern.match(sql)
+
+    if not match:
+        raise ValueError(
+            "invalid CREATE INDEX statement"
+        )
+
+    return CreateIndex(
+        index_name=match.group(1),
+        table_name=match.group(2),
+        column_name=match.group(3),
     )
 
 
@@ -370,6 +411,13 @@ def parse(sql: str) -> Statement:
     keyword = sql.split(None, 1)[0].upper()
 
     if keyword == "CREATE":
+        if re.match(
+            r"^CREATE\s+INDEX\b",
+            sql,
+            re.IGNORECASE,
+        ):
+            return _parse_create_index(sql)
+
         return _parse_create_table(sql)
 
     if keyword == "DROP":

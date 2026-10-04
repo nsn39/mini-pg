@@ -5,12 +5,14 @@ from typing import Any, List
 
 from parser import (
     CreateTable,
+    CreateIndex,
     Delete,
     DropTable,
     Insert,
     Select,
     Statement,
 )
+from catalog import Catalog
 
 
 # ----------------------------------------------------------------------
@@ -29,6 +31,13 @@ class DropTablePlan:
 
 
 @dataclass
+class CreateIndexPlan:
+    index_name: str
+    table_name: str
+    column_name: str
+
+
+@dataclass
 class InsertPlan:
     table_name: str
     row: dict[str, Any]
@@ -44,6 +53,19 @@ class SeqScanPlan:
     """
 
     table_name: str
+
+@dataclass
+class IndexScanPlan:
+    """
+    Scan rows using an index instead of scanning
+    every row in the table.
+    """
+
+    table_name: str
+    index_name: str
+    column: str
+    operator: str
+    value: str
 
 
 @dataclass
@@ -76,8 +98,10 @@ class DeletePlan:
 Plan = (
     CreateTablePlan
     | DropTablePlan
+    | CreateIndexPlan
     | InsertPlan
     | SeqScanPlan
+    | IndexScanPlan
     | FilterPlan
     | ProjectionPlan
     | DeletePlan
@@ -102,6 +126,9 @@ class Planner:
         Plan -> actual database operation
     """
 
+    def __init__(self, catalog: Catalog):
+        self.catalog = catalog
+
     def plan(self, statement: Statement) -> Plan:
 
         if isinstance(statement, CreateTable):
@@ -109,6 +136,9 @@ class Planner:
 
         if isinstance(statement, DropTable):
             return self._plan_drop_table(statement)
+
+        if isinstance(statement, CreateIndex):
+            return self._plan_create_index(statement)
 
         if isinstance(statement, Insert):
             return self._plan_insert(statement)
@@ -151,6 +181,21 @@ class Planner:
         )
 
     # ------------------------------------------------------------------
+    # CREATE INDEX
+    # ------------------------------------------------------------------
+
+    def _plan_create_index(
+        self,
+        statement: CreateIndex,
+    ) -> CreateIndexPlan:
+
+        return CreateIndexPlan(
+            index_name=statement.index_name,
+            table_name=statement.table_name,
+            column_name=statement.column_name,
+        )
+
+    # ------------------------------------------------------------------
     # INSERT
     # ------------------------------------------------------------------
 
@@ -186,29 +231,59 @@ class Planner:
         statement: Select,
     ) -> Plan:
 
-        # Every SELECT currently starts with a sequential scan.
-        scan = SeqScanPlan(
-            table_name=statement.table_name,
-        )
+        # --------------------------------------------------------------
+        # Choose the access method
+        # --------------------------------------------------------------
 
-        # Add a filter if the SELECT contains a WHERE clause.
         if statement.where is not None:
-            scan = FilterPlan(
-                column=statement.where["column"],
-                operator=statement.where["operator"],
-                value=statement.where["value"],
-                child=scan,
+
+            where_column = statement.where["column"]
+
+            index = self.catalog.get_index_for_column(
+                statement.table_name,
+                where_column,
             )
 
-        # SELECT *
-        if statement.columns == ["*"]:
-            return scan
+            # Use the index if one exists for the WHERE column.
+            if index is not None:
+                scan = IndexScanPlan(
+                    table_name=statement.table_name,
+                    index_name=index.name,
+                    column=where_column,
+                    operator=statement.where["operator"],
+                    value=statement.where["value"],
+                )
 
-        # SELECT id, name, age
-        return ProjectionPlan(
-            columns=statement.columns,
-            child=scan,
-        )
+            # Otherwise use a sequential scan + filter.
+            else:
+                scan = FilterPlan(
+                    column=where_column,
+                    operator=statement.where["operator"],
+                    value=statement.where["value"],
+                    child=SeqScanPlan(
+                        table_name=statement.table_name,
+                    ),
+                )
+
+        else:
+            # No WHERE clause → sequential scan.
+            scan = SeqScanPlan(
+                table_name=statement.table_name,
+            )
+
+    # --------------------------------------------------------------
+    # Projection
+    # --------------------------------------------------------------
+
+    # SELECT *
+    if statement.columns == ["*"]:
+        return scan
+
+    # SELECT id, name, age
+    return ProjectionPlan(
+        columns=statement.columns,
+        child=scan,
+    )
 
     # ------------------------------------------------------------------
     # DELETE
