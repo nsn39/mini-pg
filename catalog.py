@@ -19,6 +19,13 @@ class Table:
     columns: List[Column] = field(default_factory=list)
 
 
+@dataclass
+class Index:
+    name: str
+    table_name: str
+    column_name: str
+
+
 class Catalog:
     """
     System catalog for MiniPG.
@@ -26,34 +33,14 @@ class Catalog:
     The catalog keeps track of the structure of the database:
 
         database
-            └── tables
-                    └── columns
+            ├── tables
+            │       └── columns
+            │
+            └── indexes
 
     Catalog metadata is persisted to:
 
         data/catalog.json
-
-    Example:
-
-        {
-            "tables": {
-                "users": {
-                    "name": "users",
-                    "columns": [
-                        {
-                            "name": "id",
-                            "data_type": "INTEGER",
-                            "nullable": false
-                        },
-                        {
-                            "name": "name",
-                            "data_type": "TEXT",
-                            "nullable": true
-                        }
-                    ]
-                }
-            }
-        }
     """
 
     def __init__(self, data_dir: str = "data"):
@@ -66,6 +53,7 @@ class Catalog:
         self.catalog_path = self.data_dir / "catalog.json"
 
         self.tables: Dict[str, Table] = {}
+        self.indexes: Dict[str, Index] = {}
 
         self._load()
 
@@ -85,6 +73,10 @@ class Catalog:
         ) as file:
             data = json.load(file)
 
+        # --------------------------------------------------------------
+        # Load tables
+        # --------------------------------------------------------------
+
         for table_data in data.get("tables", {}).values():
 
             columns = [
@@ -103,6 +95,20 @@ class Catalog:
 
             self.tables[table.name] = table
 
+        # --------------------------------------------------------------
+        # Load indexes
+        # --------------------------------------------------------------
+
+        for index_data in data.get("indexes", {}).values():
+
+            index = Index(
+                name=index_data["name"],
+                table_name=index_data["table_name"],
+                column_name=index_data["column_name"],
+            )
+
+            self.indexes[index.name] = index
+
     def _save(self) -> None:
         """Persist the current catalog to disk."""
 
@@ -110,7 +116,11 @@ class Catalog:
             "tables": {
                 table.name: asdict(table)
                 for table in self.tables.values()
-            }
+            },
+            "indexes": {
+                index.name: asdict(index)
+                for index in self.indexes.values()
+            },
         }
 
         # Write to a temporary file first.
@@ -157,6 +167,66 @@ class Catalog:
         del self.tables[table_name]
 
         self._save()
+
+    # ------------------------------------------------------------------
+    # Index management
+    # ------------------------------------------------------------------
+
+    def create_index(self, index: Index) -> None:
+        """Add an index to the catalog."""
+
+        if index.name in self.indexes:
+            raise ValueError(
+                f"index '{index.name}' already exists"
+            )
+
+        table = self.get_table(index.table_name)
+
+        valid_columns = {
+            column.name
+            for column in table.columns
+        }
+
+        if index.column_name not in valid_columns:
+            raise ValueError(
+                f"column '{index.column_name}' does not exist "
+                f"in table '{index.table_name}'"
+            )
+
+        self.indexes[index.name] = index
+
+        self._save()
+
+    def get_index(self, index_name: str) -> Index:
+        """Return index metadata."""
+
+        try:
+            return self.indexes[index_name]
+        except KeyError:
+            raise ValueError(
+                f"index '{index_name}' does not exist"
+            )
+
+    def list_indexes(self) -> List[str]:
+        """Return all index names."""
+
+        return list(self.indexes.keys())
+
+    def get_index_for_column(
+        self,
+        table_name: str,
+        column_name: str,
+    ) -> Index | None:
+        """Return an index on a specific table column, if one exists."""
+
+        for index in self.indexes.values():
+            if (
+                index.table_name == table_name
+                and index.column_name == column_name
+            ):
+                return index
+
+        return None
 
     # ------------------------------------------------------------------
     # Lookup

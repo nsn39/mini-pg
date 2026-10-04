@@ -4,11 +4,13 @@ from typing import Any, Dict, List
 
 from catalog import Catalog, Column, Table
 from planner import (
+    CreateIndexPlan,
     CreateTablePlan,
     DeletePlan,
     DropTablePlan,
     InsertPlan,
     FilterPlan,
+    IndexScanPlan,
     Plan,
     ProjectionPlan,
     SeqScanPlan,
@@ -61,11 +63,17 @@ class Executor:
         if isinstance(plan, DropTablePlan):
             return self._execute_drop_table(plan)
 
+        if isinstance(plan, CreateIndexPlan):
+            return self._execute_create_index(plan)
+
         if isinstance(plan, InsertPlan):
             return self._execute_insert(plan)
 
         if isinstance(plan, SeqScanPlan):
             return self._execute_seq_scan(plan)
+
+        if isinstance(plan, IndexScanPlan):
+            return self._execute_index_scan(plan)
 
         if isinstance(plan, FilterPlan):
             return self._execute_filter(plan)
@@ -118,6 +126,32 @@ class Executor:
 
         return f"DROP TABLE {plan.table_name}"
 
+    def _execute_create_index(
+        self,
+        plan: CreateIndexPlan,
+    ) -> str:
+        """Execute CREATE INDEX."""
+
+        # Store the index metadata in the catalog.
+        from catalog import Index
+
+        index = Index(
+            name=plan.index_name,
+            table_name=plan.table_name,
+            column_name=plan.column_name,
+        )
+
+        self.catalog.create_index(index)
+
+        # Build the actual index structure in storage.
+        self.storage.create_index(
+            index_name=plan.index_name,
+            table_name=plan.table_name,
+            column_name=plan.column_name,
+        )
+
+        return f"CREATE INDEX {plan.index_name}"
+
     # ------------------------------------------------------------------
     # DML
     # ------------------------------------------------------------------
@@ -147,6 +181,47 @@ class Executor:
 
         return self.storage.select_all(
             plan.table_name
+        )
+    
+    def _execute_index_scan(
+        self,
+        plan: IndexScanPlan,
+    ) -> List[Row]:
+        """
+        Execute a scan using an index.
+        """
+
+        index = self.storage.get_index(
+            plan.index_name
+        )
+
+        # Convert the WHERE value from its string
+        # representation into the appropriate Python type.
+        table = self.catalog.get_table(
+            plan.table_name
+        )
+
+        column = next(
+            column
+            for column in table.columns
+            if column.name == plan.column
+        )
+
+        if column.data_type == "INTEGER":
+            value = int(plan.value)
+
+        elif column.data_type == "FLOAT":
+            value = float(plan.value)
+
+        elif column.data_type == "BOOLEAN":
+            value = plan.value.upper() == "TRUE"
+
+        else:
+            value = plan.value.strip("'\"")
+
+        return index.search(
+            plan.operator,
+            value,
         )
 
     def _execute_filter(
