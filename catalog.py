@@ -3,7 +3,7 @@
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -216,7 +216,7 @@ class Catalog:
         self,
         table_name: str,
         column_name: str,
-    ) -> Index | None:
+    ) -> Optional[Index]:
         """Return an index on a specific table column, if one exists."""
 
         for index in self.indexes.values():

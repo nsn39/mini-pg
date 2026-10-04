@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 import re
-from typing import Any, List, Optional, Dict
+from typing import Any, List, Optional, Dict, Union
 
 
 # ----------------------------------------------------------------------
@@ -32,6 +32,19 @@ class CreateIndex:
     table_name: str
     column_name: str
 
+@dataclass
+class Begin:
+    pass
+
+
+@dataclass
+class Commit:
+    pass
+
+
+@dataclass
+class Rollback:
+    pass
 
 @dataclass
 class Insert:
@@ -53,14 +66,17 @@ class Delete:
     where: Optional[Dict[str, str]] = None
 
 
-Statement = (
-    CreateTable
-    | DropTable
-    | CreateIndex
-    | Insert
-    | Select
-    | Delete
-)
+Statement = Union[
+    CreateTable,
+    DropTable,
+    CreateIndex,
+    Insert,
+    Select,
+    Delete,
+    Begin,
+    Commit,
+    Rollback,
+]
 
 
 # ----------------------------------------------------------------------
@@ -393,10 +409,14 @@ def parse(sql: str) -> Statement:
     Supported statements:
 
         CREATE TABLE
+        CREATE INDEX
         DROP TABLE
         INSERT INTO ... VALUES
         SELECT ... FROM
         DELETE FROM
+        BEGIN
+        COMMIT
+        ROLLBACK
     """
 
     sql = sql.strip()
@@ -409,6 +429,15 @@ def parse(sql: str) -> Statement:
         raise ValueError("empty SQL statement")
 
     keyword = sql.split(None, 1)[0].upper()
+
+    if keyword == "BEGIN":
+        return Begin()
+
+    if keyword == "COMMIT":
+        return Commit()
+
+    if keyword == "ROLLBACK":
+        return Rollback()
 
     if keyword == "CREATE":
         if re.match(

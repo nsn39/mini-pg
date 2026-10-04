@@ -1,9 +1,11 @@
 # minipg/planner.py
 
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any, List, Union
 
 from parser import (
+    Begin,
+    Commit,
     CreateTable,
     CreateIndex,
     Delete,
@@ -11,6 +13,7 @@ from parser import (
     Insert,
     Select,
     Statement,
+    Rollback,
 )
 from catalog import Catalog
 
@@ -95,18 +98,35 @@ class DeletePlan:
     table_name: str
     where: Any = None
 
-Plan = (
-    CreateTablePlan
-    | DropTablePlan
-    | CreateIndexPlan
-    | InsertPlan
-    | SeqScanPlan
-    | IndexScanPlan
-    | FilterPlan
-    | ProjectionPlan
-    | DeletePlan
-)
 
+@dataclass
+class BeginPlan:
+    pass
+
+
+@dataclass
+class CommitPlan:
+    pass
+
+
+@dataclass
+class RollbackPlan:
+    pass
+
+Plan = Union[
+    CreateTablePlan,
+    DropTablePlan,
+    CreateIndexPlan,
+    InsertPlan,
+    SeqScanPlan,
+    IndexScanPlan,
+    FilterPlan,
+    ProjectionPlan,
+    DeletePlan,
+    BeginPlan,
+    CommitPlan,
+    RollbackPlan,
+]
 
 # ----------------------------------------------------------------------
 # Planner
@@ -148,6 +168,15 @@ class Planner:
 
         if isinstance(statement, Delete):
             return self._plan_delete(statement)
+
+        if isinstance(statement, Begin):
+            return BeginPlan()
+
+        if isinstance(statement, Commit):
+            return CommitPlan()
+
+        if isinstance(statement, Rollback):
+            return RollbackPlan()
 
         raise ValueError(
             f"unsupported statement type: {type(statement).__name__}"
@@ -271,19 +300,19 @@ class Planner:
                 table_name=statement.table_name,
             )
 
-    # --------------------------------------------------------------
-    # Projection
-    # --------------------------------------------------------------
+        # --------------------------------------------------------------
+        # Projection
+        # --------------------------------------------------------------
 
-    # SELECT *
-    if statement.columns == ["*"]:
-        return scan
+        # SELECT *
+        if statement.columns == ["*"]:
+            return scan
 
-    # SELECT id, name, age
-    return ProjectionPlan(
-        columns=statement.columns,
-        child=scan,
-    )
+        # SELECT id, name, age
+        return ProjectionPlan(
+            columns=statement.columns,
+            child=scan,
+        )
 
     # ------------------------------------------------------------------
     # DELETE

@@ -183,6 +183,18 @@ class Storage:
         # Store the actual index in memory.
         self.indexes[index_name] = index
 
+    def rebuild_indexes(self) -> None:
+        """
+        Rebuild all in-memory indexes from the current table files.
+
+        Used after a transaction rollback restores the database
+        files.
+        """
+
+        for index_name, index in self.indexes.items():
+            rows = self.select_all(index.table_name)
+            index.build(rows)
+
     def get_index(
         self,
         index_name: str,
