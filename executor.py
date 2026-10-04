@@ -2,17 +2,21 @@
 
 from typing import Any, Dict, List
 
+from transaction import TransactionManager
 from catalog import Catalog, Column, Table
 from planner import (
+    BeginPlan,
+    CommitPlan,
     CreateIndexPlan,
     CreateTablePlan,
     DeletePlan,
     DropTablePlan,
-    InsertPlan,
     FilterPlan,
     IndexScanPlan,
+    InsertPlan,
     Plan,
     ProjectionPlan,
+    RollbackPlan,
     SeqScanPlan,
 )
 from storage import Row, Storage
@@ -46,6 +50,10 @@ class Executor:
         self.catalog = Catalog()
         self.storage = Storage(self.catalog)
 
+        self.transaction_manager = TransactionManager(
+            self.storage
+        )
+
     # ------------------------------------------------------------------
     # Main execution entry point
     # ------------------------------------------------------------------
@@ -56,6 +64,15 @@ class Executor:
 
         The plan determines which operation should be performed.
         """
+
+        if isinstance(plan, BeginPlan):
+            return self.transaction_manager.begin()
+
+        if isinstance(plan, CommitPlan):
+            return self.transaction_manager.commit()
+
+        if isinstance(plan, RollbackPlan):
+            return self.transaction_manager.rollback()
 
         if isinstance(plan, CreateTablePlan):
             return self._execute_create_table(plan)
