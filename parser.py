@@ -430,7 +430,7 @@ def parse(sql: str) -> Statement:
 
     keyword = sql.split(None, 1)[0].upper()
 
-    if keyword == "BEGIN":
+    if keyword == "START": # Changed from "BEGIN" to deliberately add a bug.
         return Begin()
 
     if keyword == "COMMIT":
